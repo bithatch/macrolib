@@ -2,7 +2,7 @@
 
 Java input event remapping and macro library for Linux. This library is a Java port of the macro system in [Gnome15](https://github.com/Gnome15/gnome15), of which I was the original author. 
 
-It was stripped down and converted to Java, modernising and adding some new features so it could be made part of my related project, [../Snake](Snake) which has some similarities, but is for Razer keyboards.
+It was stripped down and converted to Java, modernising and adding some new features so it could be made part of my related project, [Snake](../snake) which has some similarities, but is for Razer keyboards.
 
 ## Configuring your project
 
@@ -23,6 +23,6 @@ Requires Java 9 or higher (due to modularity requirements).
 
 ## Try It
 
-There is no further documentation just yet, I am focussed on the primary user of this library, the application [Snake](../Snake).
+There is no further documentation just yet, I am focussed on the primary user of this library, the application [Snake](../snake).
 
 
