@@ -14,6 +14,7 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Iterator;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -344,10 +345,18 @@ public class JsonMacroStorage implements MacroStorage {
 	@Override
 	public void saveProfile(MacroProfile profile) throws IOException {
 		checkInit();
-		Path activeProfileFile = getProfileFile(profile.getDevice(), profile.getId());
-		try (OutputStream out = Files.newOutputStream(activeProfileFile)) {
+
+		Path tmpFile = getProfiles(profile.getDevice()).resolve(getProfileFileName(profile.getId()) + ".tmp");
+		try (OutputStream out = Files.newOutputStream(tmpFile)) {
 			save(profile, out);
 		}
+
+		/* Check we can load the new one (don't do anything with it though) */
+		loadProfile(profile.getDevice(), tmpFile);
+
+		/* All good, rename */
+		Path activeProfileFile = getProfileFile(profile.getDevice(), profile.getId());
+		Files.move(tmpFile, activeProfileFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
 	}
 
 	/**

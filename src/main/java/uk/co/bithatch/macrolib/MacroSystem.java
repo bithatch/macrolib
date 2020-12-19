@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
 import com.sshtools.jfreedesktop.icons.IconService;
 import com.sshtools.jfreedesktop.icons.LinuxIconService;
 
+import uk.co.bithatch.linuxio.EventCode;
+import uk.co.bithatch.linuxio.InputDevice.Event;
 import uk.co.bithatch.macrolib.WindowMonitor.Listener;
 
 /**
@@ -63,6 +65,21 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
+	 * The listener interface for receiving macro system events. The class that is
+	 * interested in processing a macro system event implements this interface, and
+	 * the object created with that class is registered with a component using the
+	 * component's <code>addMacroSystemListener</code> method. When the macro system
+	 * event occurs, that object's appropriate method is invoked.
+	 */
+	public interface MacroSystemListener {
+
+		/**
+		 * Macro system changed.
+		 */
+		void macroSystemChanged();
+	}
+
+	/**
 	 * The listener interface for receiving profile events. The class that is
 	 * interested in processing a profile event implements this interface, and the
 	 * object created with that class is registered with a component using the
@@ -81,18 +98,21 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
-	 * The listener interface for receiving macro system events. The class that is
-	 * interested in processing a macro system event implements this interface, and the
-	 * object created with that class is registered with a component using the
-	 * component's <code>addMacroSystemListener</code> method. When the macro system event
-	 * occurs, that object's appropriate method is invoked.
+	 * Interface to be implemented by classes wishing to be notified of events in
+	 * the macro recording system.
 	 */
-	public interface MacroSystemListener {
+	public interface RecordingListener {
 
 		/**
-		 * Macro system changed.
+		 * An event was recorded
 		 */
-		void macroSystemChanged();
+		void eventRecorded();
+
+		/**
+		 * Macro system state changed.
+		 * @param session TODO
+		 */
+		void recordingStateChange(RecordingSession session);
 	}
 
 	static class ApplicationMatch {
@@ -210,6 +230,15 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	/** The Constant ACTION_PREVIOUS_BANK. */
 	public static final String ACTION_PREVIOUS_BANK = "previous-bank";
 
+	/** The Constant ACTION_START_RECORDING. */
+	public static final String ACTION_START_RECORDING = "start-recording";
+
+	/** The Constant ACTION_START_RECORDING. */
+	public static final String ACTION_STOP_RECORDING = "stop-recording";
+
+	/** The Constant ACTION_TOGGLE_RECORDING_PAUSE. */
+	public static final String ACTION_TOGGLE_PAUSE_RECORDING = "toggle-pause-recording";
+
 	/** The Constant DEFAULT_UID. */
 	public final static UUID DEFAULT_UID = new UUID(0, 0);
 
@@ -227,18 +256,19 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	private Map<String, Action> actions = new HashMap<>();
 	private List<ActiveBankListener> activeBankListeners = new ArrayList<>();
 	private List<ActiveProfileListener> activeProfileListeners = new ArrayList<>();
-	private List<MacroSystemListener> macroSystemListeners = new ArrayList<>();
 	private DesktopIO desktopIO;
 	private Map<MacroDevice, MacroDeviceState> devices = Collections.synchronizedMap(new HashMap<>());
 	private IconService iconService;
 	private double keyHoldDelay = 2;
 	private ScheduledExecutorService macroQueue;
+	private List<MacroSystemListener> macroSystemListeners = new ArrayList<>();
 	private WindowMonitor monitor;
 	private boolean open;
 	private List<ProfileListener> profileListeners = new ArrayList<>();
 	private ScheduledExecutorService queue;
+	private List<RecordingListener> recordingListeners = new ArrayList<>();
+	private RecordingSession recordingSession = new RecordingSession();
 	private MacroStorage storage;
-
 	private UInput uinput;
 
 	/**
@@ -260,12 +290,13 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 		/* Separate queue for possibly long running scripts etc */
 		macroQueue = Executors.newScheduledThreadPool(1);
 		desktopIO = new X11DesktopIO();
-		
+
 		/* Initialise storage */
 		this.storage.init(this);
 
 		try {
 			iconService = new LinuxIconService();
+			iconService.postInit();
 		} catch (Exception e) {
 			throw new IllegalStateException("Failed to start icon service.", e);
 		}
@@ -338,6 +369,24 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 				return false;
 			}));
 		}
+
+		/* Start recording */
+		addAction(new Action(ACTION_START_RECORDING, (ex) -> {
+			startRecording();
+			return true;
+		}));
+
+		/* Stop recording */
+		addAction(new Action(ACTION_STOP_RECORDING, (ex) -> {
+			stopRecording();
+			return true;
+		}));
+
+		/* Toggle pause recording  */
+		addAction(new Action(ACTION_TOGGLE_PAUSE_RECORDING, (ex) -> {
+			togglePauseRecording();
+			return true;
+		}));
 	}
 
 	/**
@@ -364,26 +413,6 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 		if (actions.containsKey(action.getId()))
 			throw new IllegalArgumentException(String.format("Action %s already registered.", action.getId()));
 		this.actions.put(action.getId(), action);
-	}
-
-	/**
-	 * Add a listener that is notified when profiles are added or removed, or other
-	 * global macro system changes.
-	 * 
-	 * @param listener listener to be notified when macro system changes
-	 */
-	public void addMacroSystemListener(MacroSystemListener listener) {
-		this.macroSystemListeners.add(listener);
-	}
-
-	/**
-	 * Remove a listener from those notified when profiles are added or removed, or
-	 * other global macro system changes.
-	 * 
-	 * @param listener listener to no longer be notified when macro system changes
-	 */
-	public void removeMacroSystemListener(MacroSystemListener listener) {
-		this.macroSystemListeners.add(listener);
 	}
 
 	/**
@@ -451,7 +480,11 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 
 			MacroKeyboard keyboard = new MacroKeyboard(this, device, queue);
 			keyboard.addActionListener(this);
-			DeviceHandler handler = new ForwardDeviceHandler(uinput, device, keyboard, queue);
+			DeviceHandler handler = new ForwardDeviceHandler(uinput, device, (key, state, event) -> {
+				/* Intercept the event consume so we can capture during recording */
+				if (processForRecording(key, state, event, device))
+					keyboard.keyReceived(key, state, event);
+			}, queue);
 			macroDeviceState.handler = handler;
 			macroDeviceState.keyboard = keyboard;
 
@@ -475,12 +508,32 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
+	 * Add a listener that is notified when profiles are added or removed, or other
+	 * global macro system changes.
+	 * 
+	 * @param listener listener to be notified when macro system changes
+	 */
+	public void addMacroSystemListener(MacroSystemListener listener) {
+		this.macroSystemListeners.add(listener);
+	}
+
+	/**
 	 * Add a listener that is notified when a activeProfiles changes on any device.
 	 * 
 	 * @param listener listener to be notified when activeProfiles changes
 	 */
 	public void addProfileListener(ProfileListener listener) {
 		this.profileListeners.add(listener);
+	}
+
+	/**
+	 * Add a listener that is notified when events happen in the macro recording
+	 * system.
+	 * 
+	 * @param listener listener to be notified when recording state changes
+	 */
+	public void addRecordingListener(RecordingListener listener) {
+		this.recordingListeners.add(listener);
 	}
 
 	/**
@@ -607,6 +660,20 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
+	 * Get the number of profiles a device has.
+	 * 
+	 * @param device device
+	 * @return number of profiles
+	 */
+	public int getNumberOfProfiles(MacroDevice device) {
+		try {
+			return storage.getNumberOfProfiles(device);
+		} catch (IOException e) {
+			throw new IllegalStateException(String.format("Failed to count profiles for device %s", device.getId()));
+		}
+	}
+
+	/**
 	 * Gets the or create profile with name.
 	 *
 	 * @param device the device
@@ -642,6 +709,15 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
+	 * Get recording session.
+	 * 
+	 * @return recording session
+	 */
+	public RecordingSession getRecordingSession() {
+		return recordingSession;
+	}
+
+	/**
 	 * Gets the u input.
 	 *
 	 * @return the u input
@@ -657,6 +733,15 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	 */
 	public MacroStorage getWriter() {
 		return storage;
+	}
+
+	/**
+	 * Get the window monitor.
+	 * 
+	 * @return window monitor
+	 */
+	public WindowMonitor getMonitor() {
+		return monitor;
 	}
 
 	/**
@@ -679,6 +764,17 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	 */
 	public boolean isOpen() {
 		return open;
+	}
+
+	/**
+	 * Get if recording.
+	 * 
+	 * @return recording
+	 */
+	public boolean isRecording() {
+		synchronized (recordingSession) {
+			return recordingSession.getRecordingState().isRecording();
+		}
 	}
 
 	/**
@@ -780,6 +876,16 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
+	 * Remove a listener from those notified when profiles are added or removed, or
+	 * other global macro system changes.
+	 * 
+	 * @param listener listener to no longer be notified when macro system changes
+	 */
+	public void removeMacroSystemListener(MacroSystemListener listener) {
+		this.macroSystemListeners.remove(listener);
+	}
+
+	/**
 	 * Remove a listener from those notified when the active activeProfiles changes
 	 * on any device.
 	 * 
@@ -788,6 +894,16 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	 */
 	public void removeProfileListener(ProfileListener listener) {
 		this.profileListeners.remove(listener);
+	}
+
+	/**
+	 * Remove a listener from those notified when events happen in the macro
+	 * recording system.
+	 * 
+	 * @param listener listener to be removed
+	 */
+	public void removeRecordingListener(RecordingListener listener) {
+		this.recordingListeners.remove(listener);
 	}
 
 	/**
@@ -805,12 +921,6 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 			if (Objects.equals(activeProfile, bankProfile)) {
 				LOG.log(Level.INFO,
 						String.format("Setting device %s to bank %d", bankProfile.getDevice().getId(), bank.getBank()));
-				try {
-					throw new Exception();
-				}
-				catch(Exception e) {
-					e.printStackTrace();
-				}
 				devices.get(device).bank = bank;
 				storage.setActiveBank(bank);
 				for (int i = activeBankListeners.size() - 1; i >= 0; i--)
@@ -920,16 +1030,49 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 	}
 
 	/**
-	 * Get the number of profiles a device has.
-	 * 
-	 * @param device device
-	 * @return number of profiles
+	 * Start recording
 	 */
-	public int getNumberOfProfiles(MacroDevice device) {
-		try {
-			return storage.getNumberOfProfiles(device);
-		} catch (IOException e) {
-			throw new IllegalStateException(String.format("Failed to count profiles for device %s", device.getId()));
+	public void startRecording() {
+		synchronized (recordingSession) {
+			if (recordingSession.getRecordingState() != RecordingState.IDLE
+					&& recordingSession.getRecordingState() != RecordingState.ERROR) {
+				throw new IllegalStateException();
+			}
+			recordingSession.start();
+			for (int i = recordingListeners.size() - 1; i >= 0; i--)
+				recordingListeners.get(i).recordingStateChange(recordingSession);
+		}
+	}
+
+	/**
+	 * Stop recording
+	 */
+	public void stopRecording() {
+		synchronized (recordingSession) {
+			if (recordingSession.getRecordingState() == RecordingState.IDLE
+					|| recordingSession.getRecordingState() == RecordingState.ERROR) {
+				throw new IllegalStateException();
+			}
+			recordingSession.stop();
+			for (int i = recordingListeners.size() - 1; i >= 0; i--)
+				recordingListeners.get(i).recordingStateChange(recordingSession);
+		}
+	}
+
+	/**
+	 * Toggle pause recording
+	 */
+	public void togglePauseRecording() {
+		synchronized (recordingSession) {
+			if (!isRecording()) {
+				throw new IllegalStateException();
+			}
+			if (recordingSession.getRecordingState() == RecordingState.PAUSED)
+				recordingSession.unpause();
+			else
+				recordingSession.pause();
+			for (int i = recordingListeners.size() - 1; i >= 0; i--)
+				recordingListeners.get(i).recordingStateChange(recordingSession);
 		}
 	}
 
@@ -1030,6 +1173,15 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 		}
 	}
 
+	void bankAdded(MacroBank bank) {
+		try {
+			storage.saveProfile(bank.getProfile());
+			fireProfileChange(bank.getProfile());
+		} catch (IOException ioe) {
+			throw new IllegalStateException("Failed to update profile.", ioe);
+		}
+	}
+
 	/**
 	 * 
 	 * Create the default activeProfiles for the specified device if it doesn't
@@ -1046,11 +1198,25 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 		return defaultProfile;
 	}
 
+	void fireProfileChange(MacroProfile profile) {
+		for (int i = profileListeners.size() - 1; i >= 0; i--)
+			profileListeners.get(i).profileChanged(profile.getDevice(), profile);
+	}
+
 	void fireProfileChanged(MacroDevice device, MacroProfile profile) {
 		for (int i = profileListeners.size() - 1; i >= 0; i--) {
 			profileListeners.get(i).profileChanged(device, profile);
 		}
 
+	}
+
+	void profileChanged(MacroProfile profile) {
+		try {
+			storage.saveProfile(profile);
+			fireProfileChange(profile);
+		} catch (IOException ioe) {
+			throw new IllegalStateException("Failed to update profile.", ioe);
+		}
 	}
 
 	void removedBank(MacroBank macroBank) {
@@ -1063,11 +1229,6 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 		}
 	}
 
-	void fireProfileChange(MacroProfile profile) {
-		for (int i = profileListeners.size() - 1; i >= 0; i--)
-			profileListeners.get(i).profileChanged(profile.getDevice(), profile);
-	}
-
 	void removedProfile(MacroProfile profile) {
 		try {
 			storage.removeProfile(profile);
@@ -1077,21 +1238,12 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 		}
 	}
 
-	void bankAdded(MacroBank bank) {
-		try {
-			storage.saveProfile(bank.getProfile());
-			fireProfileChange(bank.getProfile());
-		} catch (IOException ioe) {
-			throw new IllegalStateException("Failed to update profile.", ioe);
+	private boolean processForRecording(EventCode key, KeyState state, Event event, MacroDevice device) {
+		switch (recordingSession.getRecordingState()) {
+		default:
+			/* Pass on event as normal */
+			return true;
 		}
 	}
 
-	void profileChanged(MacroProfile profile) {
-		try {
-			storage.saveProfile(profile);
-			fireProfileChange(profile);
-		} catch (IOException ioe) {
-			throw new IllegalStateException("Failed to update profile.", ioe);
-		}
-	}
 }

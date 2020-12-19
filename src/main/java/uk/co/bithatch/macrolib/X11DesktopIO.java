@@ -7,9 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.github.kwhat.jnativehook.GlobalScreen;
-import com.github.kwhat.jnativehook.NativeInputEvent;
-import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
+import javax.swing.SwingUtilities;
+
 import com.sun.jna.Native;
 import com.sun.jna.NativeLong;
 import com.sun.jna.platform.unix.X11;
@@ -90,8 +89,6 @@ public class X11DesktopIO implements DesktopIO {
 
 	private IntByReference minKeycodes;
 
-	private boolean useJNativeHook;
-
 	private boolean useXTest = true;
 
 	private WindowByReference winRef;
@@ -102,7 +99,9 @@ public class X11DesktopIO implements DesktopIO {
 	 * Instantiates a new x 11 desktop IO.
 	 */
 	public X11DesktopIO() {
-		initXtest();
+		SwingUtilities.invokeLater(() -> {
+			initXtest();
+		});
 	}
 
 	/**
@@ -119,7 +118,7 @@ public class X11DesktopIO implements DesktopIO {
 		if (LOG.isLoggable(Level.DEBUG))
 			LOG.log(Level.DEBUG, "Sending string %s", string);
 
-		if (!useJNativeHook && (!useXTest || !xTestAvailable)) {
+		if (!useXTest || !xTestAvailable) {
 			winRef = new X11.WindowByReference();
 			IntByReference revert_to_return = new IntByReference();
 			X11DesktopIO.XLib.INSTANCE.XGetInputFocus(localDpy, winRef, revert_to_return);
@@ -133,66 +132,49 @@ public class X11DesktopIO implements DesktopIO {
 
 		int keycode = kcs[0];
 		int shift_mask = kcs[1];
-		int keysym = kcs[2];
+//		int keysym = kcs[2];
 
-		if (useJNativeHook) {
-
-			NativeInputEvent nie;
-
+		if (xTestAvailable && useXTest) {
 			if (LOG.isLoggable(Level.DEBUG))
-				LOG.log(Level.DEBUG, String.format("Sending JNative hook keychar %s press = %s, keysym = %d (%04x)",
-						string, press, keysym, keysym));
-			/* TODO: probably doesn't work as is. */
+				LOG.log(Level.DEBUG, String.format("XTEST Sending keychar %s keycode %d, press = %s, shift = %d",
+						string, keycode, String.valueOf(press), shift_mask));
 			if (press) {
-				nie = new NativeKeyEvent(0, 0, keysym, keycode, NativeKeyEvent.CHAR_UNDEFINED);
-
+				if (shift_mask != 0)
+					X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, 62, true, new NativeLong(0));
+				X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, keycode, true, new NativeLong(0));
 			} else {
-				nie = new NativeKeyEvent(0, 0, keysym, keycode, NativeKeyEvent.CHAR_UNDEFINED);
-			}
-			GlobalScreen.postNativeEvent(nie);
-		} else {
-			if (xTestAvailable && useXTest) {
-				if (LOG.isLoggable(Level.DEBUG))
-					LOG.log(Level.DEBUG, String.format("XTEST Sending keychar %s keycode %d, press = %s, shift = %d",
-							string, keycode, String.valueOf(press), shift_mask));
-				if (press) {
-					if (shift_mask != 0)
-						X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, 62, true, new NativeLong(0));
-					X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, keycode, true, new NativeLong(0));
-				} else {
-					X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, keycode, false, new NativeLong(0));
-					if (shift_mask != 0)
-						X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, 62, false, new NativeLong(0));
+				X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, keycode, false, new NativeLong(0));
+				if (shift_mask != 0)
+					X11.XTest.INSTANCE.XTestFakeKeyEvent(localDpy, 62, false, new NativeLong(0));
 
-					/* Not reading so must flush */
-					X11.INSTANCE.XFlush(localDpy);
-				}
-			} else {
-				if (LOG.isLoggable(Level.DEBUG))
-					LOG.log(Level.DEBUG, String.format("Raw X11 Sending keychar %s keycode %d, press = %s, shift = %d",
-							string, keycode, String.valueOf(press), shift_mask));
-				int screen = X11.INSTANCE.XDefaultScreen(localDpy);
-				int ret;
-				if (press) {
-					XKeyEvent xkev = createXKeyEvent(X11.KeyPress, keycode, shift_mask, screen);
-					XEvent event = new XEvent();
-					event.xkey = xkev;
-					NativeLong mask = new NativeLong(X11.KeyPressMask);
-					ret = X11.INSTANCE.XSendEvent(localDpy, winRef.getValue(), 1, mask, event);
-				} else {
-					XKeyEvent xkev = createXKeyEvent(X11.KeyRelease, keycode, shift_mask, screen);
-					XEvent event = new XEvent();
-					event.xkey = xkev;
-					NativeLong mask = new NativeLong(X11.KeyReleaseMask);
-					ret = X11.INSTANCE.XSendEvent(localDpy, winRef.getValue(), 1, mask, event);
-				}
-				if (LOG.isLoggable(Level.DEBUG))
-					LOG.log(Level.DEBUG,
-							String.format("Raw X11 Sent keychar %s keycode %d, press = %s, shift = %d, resulted in %d",
-									string, keycode, String.valueOf(press), shift_mask, ret));
+				/* Not reading so must flush */
 				X11.INSTANCE.XFlush(localDpy);
-//                X11.INSTANCE.XSync(localDpy, false);
 			}
+		} else {
+			if (LOG.isLoggable(Level.DEBUG))
+				LOG.log(Level.DEBUG, String.format("Raw X11 Sending keychar %s keycode %d, press = %s, shift = %d",
+						string, keycode, String.valueOf(press), shift_mask));
+			int screen = X11.INSTANCE.XDefaultScreen(localDpy);
+			int ret;
+			if (press) {
+				XKeyEvent xkev = createXKeyEvent(X11.KeyPress, keycode, shift_mask, screen);
+				XEvent event = new XEvent();
+				event.xkey = xkev;
+				NativeLong mask = new NativeLong(X11.KeyPressMask);
+				ret = X11.INSTANCE.XSendEvent(localDpy, winRef.getValue(), 1, mask, event);
+			} else {
+				XKeyEvent xkev = createXKeyEvent(X11.KeyRelease, keycode, shift_mask, screen);
+				XEvent event = new XEvent();
+				event.xkey = xkev;
+				NativeLong mask = new NativeLong(X11.KeyReleaseMask);
+				ret = X11.INSTANCE.XSendEvent(localDpy, winRef.getValue(), 1, mask, event);
+			}
+			if (LOG.isLoggable(Level.DEBUG))
+				LOG.log(Level.DEBUG,
+						String.format("Raw X11 Sent keychar %s keycode %d, press = %s, shift = %d, resulted in %d",
+								string, keycode, String.valueOf(press), shift_mask, ret));
+			X11.INSTANCE.XFlush(localDpy);
+//                X11.INSTANCE.XSync(localDpy, false);
 		}
 	}
 
@@ -297,24 +279,15 @@ public class X11DesktopIO implements DesktopIO {
 	 * Initialise XTEST if it is available.
 	 */
 	void initXtest() {
-		LOG.log(Level.INFO, "Initialising macro output system");
+		LOG.log(Level.DEBUG, "Initialising macro output system");
 
 		/* Load Virtkey if it is available, using it for preference */
-
-		useJNativeHook = false;
-//		try {
-//			GlobalScreen.registerNativeHook();
-//			useJNativeHook = true;
-//
-//			/* Need this for jnativehook as well for lookup */
-//			localDpy = X11.INSTANCE.XOpenDisplay(null);
-//		} catch (Exception e) {
-//			LOG.log(Level.DEBUG, "No JNativeHooks, X based macros may be weird. Trying XTest", e);
 
 		/* Determine whether to use XTest for sending key events to X */
 		xTestAvailable = true;
 		try {
-			X11.XTest i = X11.XTest.INSTANCE;
+			@SuppressWarnings("unused")
+			Object o = X11.XTest.INSTANCE;
 		} catch (Exception e2) {
 			LOG.log(Level.DEBUG, "No XTest, falling back to raw X11 events", e2);
 			xTestAvailable = false;
@@ -330,7 +303,6 @@ public class X11DesktopIO implements DesktopIO {
 			LOG.log(Level.DEBUG, "Found XTEST module, but the X extension could not be found");
 			xTestAvailable = false;
 		}
-//		}
 	}
 
 	Integer[] keysymToKeyCodes(KeySym keysym) {

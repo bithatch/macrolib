@@ -39,7 +39,6 @@ import uk.co.bithatch.macrolib.wnck.WnckApplication;
 import uk.co.bithatch.macrolib.wnck.WnckScreen;
 import uk.co.bithatch.macrolib.wnck.WnckWindow;
 
-
 /**
  * The Class WindowMonitor.
  */
@@ -49,7 +48,7 @@ public class WindowMonitor implements Closeable {
 	 * The Interface Listener.
 	 */
 	public interface Listener {
-		
+
 		/**
 		 * Active changed.
 		 *
@@ -63,7 +62,7 @@ public class WindowMonitor implements Closeable {
 		 * Active changed.
 		 *
 		 * @param oldWindow the old window
-		 * @param newApp the new app
+		 * @param newApp    the new app
 		 */
 		default void activeChanged(Window oldWindow, Window newApp) {
 		}
@@ -91,6 +90,7 @@ public class WindowMonitor implements Closeable {
 			super(view);
 		}
 	}
+
 	class BAMFView implements View {
 
 		private uk.co.bithatch.macrolib.bamf.View view;
@@ -120,12 +120,14 @@ public class WindowMonitor implements Closeable {
 		}
 
 	}
+
 	class BAMFWindowImpl extends BAMFView implements Window {
 
 		public BAMFWindowImpl(uk.co.bithatch.macrolib.bamf.View view) {
 			super(view);
 		}
 	}
+
 	class WnckApplicationImpl implements Application {
 
 		private NativeLong xwindow;
@@ -161,6 +163,7 @@ public class WindowMonitor implements Closeable {
 					+ "]";
 		}
 	}
+
 	class WnckWindowImpl implements Window {
 
 		private NativeLong xwindow;
@@ -195,6 +198,7 @@ public class WindowMonitor implements Closeable {
 			return "WnckWindowImpl [getName()=" + getName() + ", getId()=" + getId() + ", getIcon()=" + getIcon() + "]";
 		}
 	}
+
 	/**
 	 * The main method.
 	 *
@@ -202,40 +206,42 @@ public class WindowMonitor implements Closeable {
 	 * @throws Exception the exception
 	 */
 	public static void main(String[] args) throws Exception {
-		WindowMonitor m = new WindowMonitor();
-		m.addListener(new Listener() {
+		try (WindowMonitor m = new WindowMonitor()) {
+			m.addListener(new Listener() {
 
-			@Override
-			public void activeChanged(Application oldApp, Application newApp) {
-				System.out.println("AAC O: " + (oldApp == null ? "none" : oldApp.getName()) + " N "
-						+ (newApp == null ? "none" : newApp.getName()));
-			}
+				@Override
+				public void activeChanged(Application oldApp, Application newApp) {
+					System.out.println("AAC O: " + (oldApp == null ? "none" : oldApp.getName()) + " N "
+							+ (newApp == null ? "none" : newApp.getName()));
+				}
 
-			@Override
-			public void activeChanged(Window oldWindow, Window newWindow) {
-				System.out.println("AWC O: " + (oldWindow == null ? "none" : oldWindow.getName()) + " N "
-						+ (newWindow == null ? "none" : newWindow.getName()));
-			}
+				@Override
+				public void activeChanged(Window oldWindow, Window newWindow) {
+					System.out.println("AWC O: " + (oldWindow == null ? "none" : oldWindow.getName()) + " N "
+							+ (newWindow == null ? "none" : newWindow.getName()));
+				}
 
-			@Override
-			public void viewClosed(View view) {
-				System.out.println("VC P: " + view.getName() + " / " + view.getIcon() + " / " + view.getId());
-			}
+				@Override
+				public void viewClosed(View view) {
+					System.out.println("VC P: " + view.getName() + " / " + view.getIcon() + " / " + view.getId());
+				}
 
-			@Override
-			public void viewOpened(View view) {
-				System.out.println("VO P: " + view.getName() + " / " + view.getIcon() + " / " + view.getId());
-			}
+				@Override
+				public void viewOpened(View view) {
+					System.out.println("VO P: " + view.getName() + " / " + view.getIcon() + " / " + view.getId());
+				}
 
-		});
-		System.out.println("AW: " + m.getActiveWindow());
-		for (Window w : m.getWindows())
-			System.out.println("    " + w);
+			});
+			System.out.println("AW: " + m.getActiveWindow());
+			for (Window w : m.getWindows())
+				System.out.println("    " + w);
 //		System.out.println("AA: " + m.getActiveApplication());
 //		for (Application a : m.getApplications())
 //			System.out.println("    " + a);
-		Thread.sleep(1000000);
+			Thread.sleep(1000000);
+		}
 	}
+
 	private DBusConnection conn;
 
 	private List<Listener> listeners = Collections.synchronizedList(new ArrayList<>());
@@ -264,8 +270,8 @@ public class WindowMonitor implements Closeable {
 	 * @param queue the queue
 	 */
 	public WindowMonitor(ScheduledExecutorService queue) {
-		this.queue  = queue;
-		
+		this.queue = queue;
+
 		/**
 		 * Try BAMF first
 		 */
@@ -322,7 +328,7 @@ public class WindowMonitor implements Closeable {
 		if (conn != null) {
 			conn.close();
 		}
-		if(ownQueue)
+		if (ownQueue)
 			queue.shutdown();
 	}
 
@@ -448,7 +454,8 @@ public class WindowMonitor implements Closeable {
 		if (path == null || path.equals(""))
 			return null;
 		try {
-			return new BAMFAppImpl(conn.getRemoteObject("org.ayatana.bamf", path, uk.co.bithatch.macrolib.bamf.View.class));
+			return new BAMFAppImpl(
+					conn.getRemoteObject("org.ayatana.bamf", path, uk.co.bithatch.macrolib.bamf.View.class));
 		} catch (DBusException e) {
 			e.printStackTrace();
 			throw new IllegalStateException("Failed to get window.", e);
@@ -461,7 +468,8 @@ public class WindowMonitor implements Closeable {
 		if (path == null || path.equals(""))
 			return null;
 		try {
-			return new BAMFView(conn.getRemoteObject("org.ayatana.bamf", path, uk.co.bithatch.macrolib.bamf.View.class));
+			return new BAMFView(
+					conn.getRemoteObject("org.ayatana.bamf", path, uk.co.bithatch.macrolib.bamf.View.class));
 		} catch (DBusException e) {
 			e.printStackTrace();
 			throw new IllegalStateException("Failed to get window.", e);
@@ -474,7 +482,8 @@ public class WindowMonitor implements Closeable {
 		if (path == null || path.equals(""))
 			return null;
 		try {
-			return new BAMFWindowImpl(conn.getRemoteObject("org.ayatana.bamf", path, uk.co.bithatch.macrolib.bamf.View.class));
+			return new BAMFWindowImpl(
+					conn.getRemoteObject("org.ayatana.bamf", path, uk.co.bithatch.macrolib.bamf.View.class));
 		} catch (DBusException e) {
 			e.printStackTrace();
 			throw new IllegalStateException("Failed to get window.", e);
@@ -497,9 +506,9 @@ public class WindowMonitor implements Closeable {
 		return new WnckWindowImpl(wnck3.wnck_window_get_xid(window));
 	}
 
-	private void pollWnck() {
+//	private void pollWnck() {
 //		wnck3.wnck_screen_force_update(screen);
-		WnckWindow window = wnck3.wnck_screen_get_active_window(screen);
-		System.out.println("wn : " + wnck3.wnck_window_get_name(window));
-	}
+//		WnckWindow window = wnck3.wnck_screen_get_active_window(screen);
+//		System.out.println("wn : " + wnck3.wnck_window_get_name(window));
+//	}
 }
