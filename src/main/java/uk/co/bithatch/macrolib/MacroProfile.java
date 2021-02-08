@@ -16,11 +16,10 @@ import java.util.UUID;
 
 import uk.co.bithatch.linuxio.EventCode;
 
-
 /**
- * Encapsulates a single macro activeProfiles with 3 memory banks. This object
- * contains all the general information about the activeProfiles, as well as the
- * list of macros themselves.
+ * Encapsulates a single macro activeProfiles with a number memory banks. This
+ * object contains all the general information about the active profiles, as
+ * well as the list of macros themselves.
  */
 public class MacroProfile {
 
@@ -324,7 +323,7 @@ public class MacroProfile {
 	 * requires to activate.
 	 *
 	 * @param activatedBy the activated by
-	 * @param memory     memory bank number (starts at 1)
+	 * @param memory      memory bank number (starts at 1)
 	 * @return the macro
 	 */
 	public Macro getMacro(KeySequence activatedBy, int memory) {
@@ -356,7 +355,7 @@ public class MacroProfile {
 	 * Gets the macros.
 	 *
 	 * @param keyState the key state
-	 * @param bank the bank
+	 * @param bank     the bank
 	 * @return the macros
 	 */
 	public Set<Macro> getMacros(KeyState keyState, int bank) {
@@ -425,7 +424,7 @@ public class MacroProfile {
 	 * Get the full path of a resource (i.e. a path relative to the location of the
 	 * activeProfiles's file. None will be returned if no such resource exists
 	 *
-	 * @param resourceName   resource name
+	 * @param resourceName resource name
 	 * @return path to resource
 	 */
 	public Path getResourcePath(String resourceName) {

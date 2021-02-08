@@ -338,7 +338,7 @@ public class MacroBank {
 	}
 
 	public String getDisplayName() {
-		return name == null || name.length() == 0 ? "Bank " + bank : name;
+		return name == null || name.length() == 0 ? "Bank " + ( bank + 1 ): name;
 	}
 
 	public void commit() {

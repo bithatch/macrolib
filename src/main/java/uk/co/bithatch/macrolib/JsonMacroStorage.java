@@ -46,7 +46,6 @@ public class JsonMacroStorage implements MacroStorage {
 	 */
 	public JsonMacroStorage() {
 		this(Paths.get(System.getProperty("user.home") + File.separator + ".config" + File.separator + "macrolib"));
-
 	}
 
 	/**
@@ -55,6 +54,10 @@ public class JsonMacroStorage implements MacroStorage {
 	public JsonMacroStorage(Path configuration) {
 		setConfiguration(configuration);
 
+	}
+
+	@Override
+	public void close() throws IOException {
 	}
 
 	/**
@@ -119,6 +122,15 @@ public class JsonMacroStorage implements MacroStorage {
 		return configuration;
 	}
 
+	@Override
+	public int getNumberOfProfiles(MacroDevice device) throws IOException {
+		DirectoryStream<Path> stream = getStream(device);
+		int c = 0;
+		for (Iterator<Path> it = stream.iterator(); it.hasNext() && it.next() != null; c++)
+			;
+		return c;
+	}
+
 	/**
 	 * Get the icon for the activeProfiles. This will either be a specific icon
 	 * path, or if none is available, the default activeProfiles icon. If the icon
@@ -175,6 +187,11 @@ public class JsonMacroStorage implements MacroStorage {
 			}
 		}
 		return null;
+	}
+
+	@Override
+	public void init(MacroSystem system) {
+		this.system = system;
 	}
 
 	/**
@@ -330,10 +347,21 @@ public class JsonMacroStorage implements MacroStorage {
 		};
 	}
 
-	protected DirectoryStream<Path> getStream(MacroDevice device) throws IOException {
-		DirectoryStream<Path> stream = Files.newDirectoryStream(getProfiles(device),
-				(f) -> Files.isRegularFile(f) && f.getFileName().toString().endsWith(".json"));
-		return stream;
+	@Override
+	public void removeProfile(MacroProfile profile) throws IOException {
+		MacroDevice device = profile.getDevice();
+		UUID id = profile.getId();
+		UUID defId = loadDefaultProfile(device);
+		if (id.equals(defId)) {
+			throw new IllegalStateException(
+					"Cannot remove default profile. Make another profile the default before deleting this one.");
+		}
+		UUID actId = loadActiveProfile(device);
+		if (id.equals(actId)) {
+			Files.delete(getProfileFile(device, id));
+		}
+		Files.delete(getActiveBankFile(profile));
+		Files.delete(getDefaultBankFile(profile));
 	}
 
 	/**
@@ -456,24 +484,88 @@ public class JsonMacroStorage implements MacroStorage {
 
 	}
 
+	protected Path checkDir(Path dir) {
+		if (!Files.exists(dir)) {
+			try {
+				Files.createDirectories(dir);
+			} catch (IOException e) {
+				throw new IllegalStateException("Failed to create activeProfiles directory.", e);
+			}
+		}
+		return dir;
+	}
+
 	protected void checkInit() {
 		if (system == null)
 			throw new IllegalStateException("Not initialised.");
+	}
+
+	protected Path getActiveBankFile(MacroProfile profile) {
+		return getProfiles(profile.getDevice()).resolve(String.format("%s.activeBank", profile.getId()));
 	}
 
 	protected String getActiveBankFileName(UUID id) {
 		return String.format("%s.active", id);
 	}
 
+	protected Path getActiveProfileFile(MacroDevice device) {
+		return getDevice(device).resolve("active");
+	}
+
+	protected Path getDefaultBankFile(MacroProfile profile) {
+		return getProfiles(profile.getDevice()).resolve(String.format("%s.defaultBank", profile.getId()));
+	}
+
 	protected String getDefaultBankFileName(UUID id) {
 		return String.format("%s.default", id);
+	}
+
+	protected Path getDefaultProfileFile(MacroDevice device) {
+		return getDevice(device).resolve("default");
+	}
+
+	protected Path getDevice(MacroDevice device) {
+		return checkDir(getConfiguration().resolve(device.getUID()));
+	}
+
+	protected Path getLockFile(MacroDevice device) {
+		return getDevice(device).resolve(String.format("lock", device.getUID()));
+	}
+
+	protected Path getProfileFile(MacroDevice device, UUID id) {
+		return getProfiles(device).resolve(getProfileFileName(id));
 	}
 
 	protected String getProfileFileName(UUID id) {
 		return String.format("%s.json", id);
 	}
 
+	protected Path getProfiles(MacroDevice device) {
+		return checkDir(getDevice(device).resolve("profiles"));
+	}
+
+	protected DirectoryStream<Path> getStream(MacroDevice device) throws IOException {
+		DirectoryStream<Path> stream = Files.newDirectoryStream(getProfiles(device),
+				(f) -> Files.isRegularFile(f) && f.getFileName().toString().endsWith(".json"));
+		return stream;
+	}
+
 	protected MacroProfile loadProfile(MacroDevice device, Path activeProfileFile) throws IOException {
+		GsonBuilder gson = createGsonBuilder();
+		try (Reader reader = Files.newBufferedReader(activeProfileFile)) {
+			MacroProfile profile = gson.create().fromJson(reader, MacroProfile.class);
+			if (profile == null)
+				throw new IOException(String.format("Could not parse JSON file %s.", activeProfileFile));
+			profile.setDevice(device);
+			profile.setSystem(system);
+			for (MacroBank bank : profile.getBanks()) {
+				bank.setProfile(profile);
+			}
+			return profile;
+		}
+	}
+
+	protected GsonBuilder createGsonBuilder() {
 		GsonBuilder gson = new GsonBuilder();
 		gson.registerTypeAdapter(new TypeToken<MacroBank>() {
 		}.getType(), new JsonDeserializer<MacroBank>() {
@@ -536,63 +628,10 @@ public class JsonMacroStorage implements MacroStorage {
 				}
 			}
 		});
-		try (Reader reader = Files.newBufferedReader(activeProfileFile)) {
-			MacroProfile profile = gson.create().fromJson(reader, MacroProfile.class);
-			if (profile == null)
-				throw new IOException(String.format("Could not parse JSON file %s.", activeProfileFile));
-			profile.setDevice(device);
-			profile.setSystem(system);
-			for (MacroBank bank : profile.getBanks()) {
-				bank.setProfile(profile);
-			}
-			return profile;
-		}
+		return gson;
 	}
 
-	private Path checkDir(Path dir) {
-		if (!Files.exists(dir)) {
-			try {
-				Files.createDirectories(dir);
-			} catch (IOException e) {
-				throw new IllegalStateException("Failed to create activeProfiles directory.", e);
-			}
-		}
-		return dir;
-	}
-
-	private Path getActiveBankFile(MacroProfile profile) {
-		return getProfiles(profile.getDevice()).resolve(String.format("%s.activeBank", profile.getId()));
-	}
-
-	private Path getActiveProfileFile(MacroDevice device) {
-		return getDevice(device).resolve("active");
-	}
-
-	private Path getDefaultBankFile(MacroProfile profile) {
-		return getProfiles(profile.getDevice()).resolve(String.format("%s.defaultBank", profile.getId()));
-	}
-
-	private Path getDefaultProfileFile(MacroDevice device) {
-		return getDevice(device).resolve("default");
-	}
-
-	private Path getDevice(MacroDevice device) {
-		return checkDir(getConfiguration().resolve(device.getUID()));
-	}
-
-	private Path getLockFile(MacroDevice device) {
-		return getDevice(device).resolve(String.format("lock", device.getUID()));
-	}
-
-	private Path getProfileFile(MacroDevice device, UUID id) {
-		return getProfiles(device).resolve(getProfileFileName(id));
-	}
-
-	private Path getProfiles(MacroDevice device) {
-		return checkDir(getDevice(device).resolve("profiles"));
-	}
-
-	private void save(MacroProfile profile, OutputStream os) {
+	protected void save(MacroProfile profile, OutputStream os) {
 		GsonBuilder gson = new GsonBuilder();
 		gson.registerTypeAdapter(new TypeToken<KeySequence>() {
 		}.getType(), new JsonSerializer<KeySequence>() {
@@ -612,41 +651,6 @@ public class JsonMacroStorage implements MacroStorage {
 		PrintWriter pw = new PrintWriter(new OutputStreamWriter(os));
 		pw.println(parser.toJson(profile));
 		pw.flush();
-	}
-
-	@Override
-	public int getNumberOfProfiles(MacroDevice device) throws IOException {
-		DirectoryStream<Path> stream = getStream(device);
-		int c = 0;
-		for (Iterator<Path> it = stream.iterator(); it.hasNext() && it.next() != null; c++)
-			;
-		return c;
-	}
-
-	@Override
-	public void removeProfile(MacroProfile profile) throws IOException {
-		MacroDevice device = profile.getDevice();
-		UUID id = profile.getId();
-		UUID defId = loadDefaultProfile(device);
-		if (id.equals(defId)) {
-			throw new IllegalStateException(
-					"Cannot remove default profile. Make another profile the default before deleting this one.");
-		}
-		UUID actId = loadActiveProfile(device);
-		if (id.equals(actId)) {
-			Files.delete(getProfileFile(device, id));
-		}
-		Files.delete(getActiveBankFile(profile));
-		Files.delete(getDefaultBankFile(profile));
-	}
-
-	@Override
-	public void close() throws IOException {
-	}
-
-	@Override
-	public void init(MacroSystem system) {
-		this.system = system;
 	}
 
 }

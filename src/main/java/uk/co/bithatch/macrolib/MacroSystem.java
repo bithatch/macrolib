@@ -491,8 +491,8 @@ public class MacroSystem implements AutoCloseable, ActionListener {
 			/*
 			 * Build the map of regular expression patterns for all the profiles the device
 			 * has that activate when certain windows become active. This is so we can keep
-			 * with the principal that only one activeProfiles is every loaded into memory a
-			 * time for any device.
+			 * with the principal that only one active profile is every loaded into memory at
+			 * a time for any device.
 			 * 
 			 */
 			for (Iterator<MacroProfile> profileIt = storage.profiles(device); profileIt.hasNext();) {

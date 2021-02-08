@@ -35,6 +35,7 @@ import com.sun.jna.ptr.PointerByReference;
 import uk.co.bithatch.macrolib.bamf.Matcher;
 import uk.co.bithatch.macrolib.wnck.GDK;
 import uk.co.bithatch.macrolib.wnck.Wnck3Library;
+import uk.co.bithatch.macrolib.wnck.Wnck3Library.GList;
 import uk.co.bithatch.macrolib.wnck.WnckApplication;
 import uk.co.bithatch.macrolib.wnck.WnckScreen;
 import uk.co.bithatch.macrolib.wnck.WnckWindow;
@@ -390,14 +391,16 @@ public class WindowMonitor implements Closeable {
 			wnck3.wnck_screen_force_update(screen);
 			PointerByReference windows = wnck3.wnck_screen_get_windows(screen);
 			try {
-				// Hrm... how the hell...
-//				GList l = new GList(windows.getValue());
-//				while(true) {
-//					WnckWindow wnckWindow = new WnckWindow(l.data);
-//					wl.add(getWNCKWindow(wnckWindow));
-//					l = GList.newInstance(null)
-//				}
-//				
+//				 Hrm... how the hell...
+				GList l = new GList(windows.getValue());
+				l.read();
+				while(l.data != null) {
+					WnckWindow wnckWindow = new WnckWindow(l.data);
+					wl.add(getWNCKWindow(wnckWindow));
+					l = new GList(l.next);
+					l.read();
+				}
+				
 //				for(l; l.next != null ; l = new GList(l.next)) {
 //				}
 			} finally {
