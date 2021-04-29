@@ -430,7 +430,10 @@ public class UInput implements Closeable {
 				// Centre the joystick by default
 				if (deviceType == TargetType.JOYSTICK || deviceType == TargetType.DIGITAL_JOYSTICK) {
 					syn(deviceType);
-					loadCalibration(deviceType);
+					if(isCalibrateAvailable())
+						loadCalibration(deviceType);
+					else
+						LOG.log(Level.WARNING, String.format("Virtual device %s cannot be calibrated as calibration tools are not installed.", deviceType));
 					emit(deviceType, EventCode.ABS_X, JOYSTICK_CENTER, false);
 					emit(deviceType, EventCode.ABS_Y, JOYSTICK_CENTER, false);
 					syn(deviceType);
